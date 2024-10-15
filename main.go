@@ -14,7 +14,7 @@ import (
 	"github.com/ardnew/trigger/opts"
 )
 
-const version = "0.1.0"
+const version = "0.2.0"
 
 const badExe = "%!s(BADEXE)"
 
@@ -64,18 +64,22 @@ func main() {
 	notify := make(chan string)
 
 	go func(env []string) {
-		for trigger := true; trigger; trigger = opt.Retrigger {
+		trigger := true
+		for {
 			select {
 			case <-ctx.Done():
 				return
 			case msg := <-notify:
-				trig := exec.CommandContext(ctx, opt.Trigger.Cmd, opt.Trigger.Args...)
-				trig.Stdout = opt.Trigger.Stdout
-				trig.Stderr = opt.Trigger.Stderr
-				trig.Env = append(env, fmt.Sprintf("%s=%s", opt.PatternKey, msg))
-				if err := trig.Run(); err != nil {
-					fmt.Fprintf(os.Stderr, "%v: %s", err, "run trigger command")
-					os.Exit(7)
+				if trigger {
+					trigger = opt.Retrigger
+					trig := exec.CommandContext(ctx, opt.Trigger.Cmd, opt.Trigger.Args...)
+					trig.Stdout = opt.Trigger.Stdout
+					trig.Stderr = opt.Trigger.Stderr
+					trig.Env = append(env, fmt.Sprintf("%s=%s", opt.PatternKey, msg))
+					if err := trig.Run(); err != nil {
+						fmt.Fprintf(os.Stderr, "%v: %s", err, "run trigger command")
+						os.Exit(7)
+					}
 				}
 				wg.Done()
 			}

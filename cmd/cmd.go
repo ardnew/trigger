@@ -3,7 +3,6 @@ package cmd
 import (
 	"bufio"
 	"context"
-	stderrors "errors"
 	"io"
 	"os"
 	"sync"
@@ -16,8 +15,9 @@ type Model struct {
 	Cmd            string
 	Args           []string
 	Owrite, Append string
-	Stdout         io.WriteCloser
-	Stderr         io.WriteCloser
+	TeeWrites      bool
+	Stdout         io.Writer
+	Stderr         io.Writer
 }
 
 func (m *Model) SetCommandLine(line ...string) error {
@@ -38,14 +38,25 @@ func (m *Model) output() (path string, flag int, defined bool) {
 	return m.Append, os.O_CREATE | os.O_WRONLY | os.O_APPEND, m.Append != ""
 }
 
-func (m *Model) open(path string, flag int, fallback io.WriteCloser, selfDefined, otherDefined bool) error {
+func (m *Model) open(
+	path string, 
+	flag int, 
+	fallback io.Writer, 
+	selfDefined, otherDefined bool,
+) error {
 	if selfDefined {
 		w, err := os.OpenFile(path, flag, 0o600)
 		if err != nil {
 			return err
 		}
-		m.Stdout = w
-		m.Stderr = w
+		if m.TeeWrites && fallback != nil {
+			tee := io.MultiWriter(w, fallback)
+			m.Stdout = tee
+			m.Stderr = tee
+		} else {
+			m.Stdout = w
+			m.Stderr = w
+		}
 	} else {
 		if otherDefined {
 			m.Stdout = os.Stdout
@@ -59,7 +70,12 @@ func (m *Model) open(path string, flag int, fallback io.WriteCloser, selfDefined
 }
 
 func (m *Model) Watch(
-	ctx context.Context, in io.Reader, out io.WriteCloser, wait *sync.WaitGroup, notify chan<- string, pattern ...string,
+	ctx context.Context, 
+	in io.Reader, 
+	out io.Writer, 
+	wait *sync.WaitGroup, 
+	notify chan<- string, 
+	pattern ...string,
 ) error {
 	read, err := NewCopier(ctx, in, pattern...)
 	if err != nil {
@@ -94,8 +110,4 @@ func OpenOutputs(mont, trig *Model) error {
 		return err
 	}
 	return nil
-}
-
-func (m *Model) Close() (err error) {
-	return stderrors.Join(m.Stdout.Close(), m.Stderr.Close())
 }
