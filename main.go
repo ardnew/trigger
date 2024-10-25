@@ -14,7 +14,7 @@ import (
 	"github.com/ardnew/trigger/opts"
 )
 
-const version = "0.2.0"
+const version = "0.3.0"
 
 const badExe = "%!s(BADEXE)"
 
@@ -26,11 +26,30 @@ func exeName() string {
 	return filepath.Base(e)
 }
 
+type count struct {
+	*sync.Mutex
+	n int
+}
+
+func (c *count) inc(n int) int {
+	c.Lock()
+	defer c.Unlock()
+	c.n += n
+	return c.n
+}
+
+func (c *count) get() int {
+	c.Lock()
+	defer c.Unlock()
+	return c.n
+}
+
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	opt := opts.New(exeName(), version)
+	num := count{ Mutex: new(sync.Mutex) }
 
 	if err := opt.Parse(os.Args[1:]); err != nil {
 		if errs.IsHelpFlag(err) {
@@ -63,13 +82,14 @@ func main() {
 	var wg sync.WaitGroup
 	notify := make(chan string)
 
-	go func(env []string) {
+	go func(cn *count, env []string) {
 		trigger := true
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case msg := <-notify:
+				cn.inc(1)
 				if trigger {
 					trigger = opt.Retrigger
 					trig := exec.CommandContext(ctx, opt.Trigger.Cmd, opt.Trigger.Args...)
@@ -84,7 +104,7 @@ func main() {
 				wg.Done()
 			}
 		}
-	}(os.Environ())
+	}(&num, os.Environ())
 
 	if opt.Monitor.Stdout == opt.Monitor.Stderr {
 		wg.Add(1)
@@ -127,5 +147,9 @@ func main() {
 	if err := mont.Wait(); err != nil {
 		fmt.Fprintf(os.Stderr, "%v: %s", err, "terminate monitor command")
 		os.Exit(10)
+	}
+
+	if num.get() == 0 {
+		os.Exit(0x7F)
 	}
 }
